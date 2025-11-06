@@ -1,0 +1,43 @@
+# Copyright Elasticsearch B.V. and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Modified version with kubectl for Kubernetes port-forwarding support
+
+FROM rust:1.89@sha256:c50cd6e20c46b0b36730b5eb27289744e4bb8f32abc90d8c64ca09decf4f55ba AS builder
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+
+# Cache dependencies
+RUN mkdir -p ./src/bin && \
+    echo "pub fn main() {}" > ./src/bin/elasticsearch-core-mcp-server.rs && \
+    cargo build --release
+
+COPY src ./src/
+
+RUN cargo build --release
+
+#--------------------------------------------------------------------------------------------------
+
+FROM debian:bookworm-slim
+
+# Install kubectl and ca-certificates
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates && \
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
+    rm kubectl && \
+    apt-get remove -y curl && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/elasticsearch-core-mcp-server /usr/local/bin/elasticsearch-core-mcp-server
+
+ENV CONTAINER_MODE=true
+
+EXPOSE 8080/tcp
+ENTRYPOINT ["/usr/local/bin/elasticsearch-core-mcp-server"]

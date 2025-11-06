@@ -19,6 +19,7 @@ pub mod cli;
 mod protocol;
 mod servers;
 mod utils;
+mod k8s_port_forward;
 
 use crate::cli::{Cli, Command, Configuration, HttpCommand, StdioCommand};
 use crate::protocol::http::{HttpProtocol, HttpServerConfig};
@@ -89,6 +90,25 @@ pub async fn run_http(cmd: HttpCommand, container_mode: bool) -> anyhow::Result<
 }
 
 pub async fn setup_services(config: &Option<PathBuf>, container_mode: bool) -> anyhow::Result<impl Service<RoleServer> + Clone> {
+    // Start port-forwarding if enabled
+    if k8s_port_forward::should_enable_port_forward() {
+        let pf_config = k8s_port_forward::PortForwardConfig::from_env();
+
+        // Override ES_URL if not already set
+        if std::env::var("ES_URL").is_err() {
+            let url = pf_config.es_url();
+            tracing::info!("Setting ES_URL to {} for port-forwarding", url);
+            unsafe {
+                std::env::set_var("ES_URL", &url);
+            }
+        }
+
+        k8s_port_forward::start_port_forward(pf_config).await?;
+
+        // Give the port-forward a moment to establish
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
     // Read config file and expand variables
 
     let config = if let Some(path) = config {
